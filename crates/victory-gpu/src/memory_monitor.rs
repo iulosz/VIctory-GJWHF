@@ -277,6 +277,26 @@ fn growth_over_window(
     Some(signed_delta(current_working_set, *bytes))
 }
 
+fn append_video_budget_alerts(
+    alerts: &mut Vec<Alert>,
+    usage: Option<u64>,
+    budget: Option<u64>,
+    near_code: &'static str,
+    exceeded_code: &'static str,
+) {
+    let (Some(usage), Some(budget)) = (usage, budget) else {
+        return;
+    };
+    if budget == 0 {
+        return;
+    }
+    if usage >= budget {
+        alerts.push(Alert { code: exceeded_code, critical: true });
+    } else if usage >= budget.saturating_mul(9) / 10 {
+        alerts.push(Alert { code: near_code, critical: false });
+    }
+}
+
 fn evaluate(sample: &Sample, target: u64, growth: Option<i128>) -> Vec<Alert> {
     let mut alerts = Vec::new();
 
@@ -309,6 +329,21 @@ fn evaluate(sample: &Sample, target: u64, growth: Option<i128>) -> Vec<Alert> {
     if growth.is_some_and(|bytes| bytes >= i128::from(512 * MIB)) {
         alerts.push(Alert { code: "RAM_GROWTH_SPIKE", critical: false });
     }
+
+    append_video_budget_alerts(
+        &mut alerts,
+        sample.video_local_usage,
+        sample.video_local_budget,
+        "VIDEO_LOCAL_BUDGET_NEAR",
+        "VIDEO_LOCAL_BUDGET_EXCEEDED",
+    );
+    append_video_budget_alerts(
+        &mut alerts,
+        sample.video_nonlocal_usage,
+        sample.video_nonlocal_budget,
+        "VIDEO_NONLOCAL_BUDGET_NEAR",
+        "VIDEO_NONLOCAL_BUDGET_EXCEEDED",
+    );
 
     alerts
 }
@@ -546,6 +581,28 @@ mod tests {
     fn rapid_resident_growth_is_reported() {
         let alerts = evaluate(&sample(5 * GIB, 8 * GIB, 60), 10 * GIB, Some(512 * MIB));
         assert!(alerts.iter().any(|alert| alert.code == "RAM_GROWTH_SPIKE"));
+    }
+
+    #[test]
+    fn local_video_memory_budget_produces_warning_and_critical_alerts() {
+        let mut sample = sample(4 * GIB, 8 * GIB, 60);
+        sample.video_local_usage = Some(9 * GIB);
+        sample.video_local_budget = Some(10 * GIB);
+        let alerts = evaluate(&sample, 10 * GIB, None);
+        assert!(alerts.iter().any(|alert| alert.code == "VIDEO_LOCAL_BUDGET_NEAR"));
+
+        sample.video_local_usage = Some(10 * GIB);
+        let alerts = evaluate(&sample, 10 * GIB, None);
+        assert!(alerts.iter().any(|alert| alert.code == "VIDEO_LOCAL_BUDGET_EXCEEDED" && alert.critical));
+    }
+
+    #[test]
+    fn missing_or_zero_video_budget_does_not_trigger_alerts() {
+        let mut sample = sample(4 * GIB, 8 * GIB, 60);
+        sample.video_local_usage = Some(2 * GIB);
+        sample.video_local_budget = Some(0);
+        let alerts = evaluate(&sample, 10 * GIB, None);
+        assert!(alerts.iter().all(|alert| !alert.code.starts_with("VIDEO_")));
     }
 
     #[test]
