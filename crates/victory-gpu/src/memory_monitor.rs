@@ -13,7 +13,8 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use windows_sys::Win32::System::ProcessStatus::{
-    K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    K32GetPerformanceInfo, K32GetProcessMemoryInfo, PERFORMANCE_INFORMATION,
+    PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX2,
 };
 use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
@@ -21,13 +22,15 @@ use windows_sys::Win32::System::Threading::GetCurrentProcess;
 const GIB: u64 = 1024 * 1024 * 1024;
 const MIB: u64 = 1024 * 1024;
 const HEADER: &str = concat!(
-    "unix_ms,pid,working_set_bytes,peak_working_set_bytes,private_commit_bytes,",
-    "peak_private_commit_bytes,paged_pool_bytes,nonpaged_pool_bytes,page_faults_total,",
+    "unix_ms,pid,working_set_bytes,private_working_set_bytes,peak_working_set_bytes,",
+    "private_commit_bytes,peak_private_commit_bytes,shared_commit_bytes,paged_pool_bytes,",
+    "nonpaged_pool_bytes,page_faults_total,",
     "page_faults_delta,rust_heap_bytes,placed_texture_bytes_created_total,",
     "list_upload_blocks,list_upload_bytes,system_total_ram_bytes,system_available_ram_bytes,",
-    "system_memory_load_percent,global_pagefile_limit_bytes,global_pagefile_available_bytes,",
-    "video_local_usage_bytes,video_local_budget_bytes,video_nonlocal_usage_bytes,",
-    "video_nonlocal_budget_bytes,working_set_delta_bytes,working_set_growth_window_bytes,",
+    "system_memory_load_percent,system_commit_total_bytes,system_commit_limit_bytes,",
+    "system_commit_peak_bytes,system_commit_available_bytes,video_local_usage_bytes,",
+    "video_local_budget_bytes,video_nonlocal_usage_bytes,video_nonlocal_budget_bytes,",
+    "working_set_delta_bytes,working_set_growth_window_bytes,",
     "alert_codes"
 );
 
@@ -38,9 +41,11 @@ struct Sample {
     unix_ms: u128,
     pid: u32,
     working_set: u64,
+    private_working_set: Option<u64>,
     peak_working_set: u64,
     private_commit: u64,
     peak_private_commit: u64,
+    shared_commit: Option<u64>,
     paged_pool: u64,
     nonpaged_pool: u64,
     page_faults: u64,
@@ -51,8 +56,10 @@ struct Sample {
     total_ram: u64,
     available_ram: u64,
     memory_load_percent: u32,
-    pagefile_limit: u64,
-    pagefile_available: u64,
+    system_commit_total: u64,
+    system_commit_limit: u64,
+    system_commit_peak: u64,
+    system_commit_available: u64,
     video_local_usage: Option<u64>,
     video_local_budget: Option<u64>,
     video_nonlocal_usage: Option<u64>,
@@ -129,22 +136,67 @@ pub fn start(directory: &Path) -> std::io::Result<PathBuf> {
 }
 
 fn collect() -> std::io::Result<Sample> {
-    let mut process = PROCESS_MEMORY_COUNTERS {
-        cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
-        ..Default::default()
-    };
+    let mut extended: PROCESS_MEMORY_COUNTERS_EX2 = unsafe { std::mem::zeroed() };
+    extended.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32;
     // SAFETY: GetCurrentProcess returns a pseudo-handle for this process;
-    // process is writable and cb is set to the structure's exact size.
-    let process_ok = unsafe {
+    // the extended structure is writable and cb advertises its exact size.
+    let extended_ok = unsafe {
         K32GetProcessMemoryInfo(
             GetCurrentProcess(),
-            &mut process,
-            process.cb,
+            (&mut extended as *mut PROCESS_MEMORY_COUNTERS_EX2).cast(),
+            extended.cb,
         )
     };
-    if process_ok == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
+
+    // PROCESS_MEMORY_COUNTERS_EX2 adds private resident working set and shared
+    // commit. Windows versions without EX2 support fall back to the base
+    // counters, leaving those two fields unavailable rather than failing.
+    let (
+        working_set,
+        private_working_set,
+        peak_working_set,
+        private_commit,
+        peak_private_commit,
+        shared_commit,
+        paged_pool,
+        nonpaged_pool,
+        page_faults,
+    ) = if extended_ok != 0 {
+        (
+            extended.WorkingSetSize as u64,
+            Some(extended.PrivateWorkingSetSize as u64),
+            extended.PeakWorkingSetSize as u64,
+            extended.PrivateUsage as u64,
+            extended.PeakPagefileUsage as u64,
+            Some(extended.SharedCommitUsage),
+            extended.QuotaPagedPoolUsage as u64,
+            extended.QuotaNonPagedPoolUsage as u64,
+            u64::from(extended.PageFaultCount),
+        )
+    } else {
+        let mut base = PROCESS_MEMORY_COUNTERS {
+            cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: as above, with the older, smaller counter structure.
+        let base_ok = unsafe {
+            K32GetProcessMemoryInfo(GetCurrentProcess(), &mut base, base.cb)
+        };
+        if base_ok == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        (
+            base.WorkingSetSize as u64,
+            None,
+            base.PeakWorkingSetSize as u64,
+            base.PagefileUsage as u64,
+            base.PeakPagefileUsage as u64,
+            None,
+            base.QuotaPagedPoolUsage as u64,
+            base.QuotaNonPagedPoolUsage as u64,
+            u64::from(base.PageFaultCount),
+        )
+    };
 
     // SAFETY: MEMORYSTATUSEX is plain output data. dwLength is required by
     // GlobalMemoryStatusEx and all other fields are initialized to zero.
@@ -153,6 +205,19 @@ fn collect() -> std::io::Result<Sample> {
     if unsafe { GlobalMemoryStatusEx(&mut system) } == 0 {
         return Err(std::io::Error::last_os_error());
     }
+
+    // GlobalMemoryStatusEx is useful for physical RAM availability. Get
+    // system-wide commit totals separately: the page counts are multiplied
+    // by the reported page size, as required by PERFORMANCE_INFORMATION.
+    let mut performance: PERFORMANCE_INFORMATION = unsafe { std::mem::zeroed() };
+    performance.cb = std::mem::size_of::<PERFORMANCE_INFORMATION>() as u32;
+    if unsafe { K32GetPerformanceInfo(&mut performance, performance.cb) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let page_size = performance.PageSize as u64;
+    let commit_total = (performance.CommitTotal as u64).saturating_mul(page_size);
+    let commit_limit = (performance.CommitLimit as u64).saturating_mul(page_size);
+    let commit_peak = (performance.CommitPeak as u64).saturating_mul(page_size);
 
     let video = crate::host::video_memory().map(|segments| {
         // host::video_memory reports decimal MB for its existing log line.
@@ -167,15 +232,15 @@ fn collect() -> std::io::Result<Sample> {
     Ok(Sample {
         unix_ms: now_unix_ms(),
         pid: std::process::id(),
-        working_set: process.WorkingSetSize as u64,
-        peak_working_set: process.PeakWorkingSetSize as u64,
-        // On supported Windows versions PagefileUsage is the process's
-        // private commit charge, not its physically resident RAM.
-        private_commit: process.PagefileUsage as u64,
-        peak_private_commit: process.PeakPagefileUsage as u64,
-        paged_pool: process.QuotaPagedPoolUsage as u64,
-        nonpaged_pool: process.QuotaNonPagedPoolUsage as u64,
-        page_faults: u64::from(process.PageFaultCount),
+        working_set,
+        private_working_set,
+        peak_working_set,
+        private_commit,
+        peak_private_commit,
+        shared_commit,
+        paged_pool,
+        nonpaged_pool,
+        page_faults,
         rust_heap: crate::copystat::HEAP_BYTES.load(std::sync::atomic::Ordering::Relaxed),
         // PLACED_BYTES counts texture allocations made during this process;
         // it is cumulative, unlike the current DXGI usage and upload counters.
@@ -186,8 +251,10 @@ fn collect() -> std::io::Result<Sample> {
         total_ram: system.ullTotalPhys,
         available_ram: system.ullAvailPhys,
         memory_load_percent: system.dwMemoryLoad,
-        pagefile_limit: system.ullTotalPageFile,
-        pagefile_available: system.ullAvailPageFile,
+        system_commit_total: commit_total,
+        system_commit_limit: commit_limit,
+        system_commit_peak: commit_peak,
+        system_commit_available: commit_limit.saturating_sub(commit_total),
         video_local_usage: video.map(|v| v[0].0),
         video_local_budget: video.map(|v| v[0].1),
         video_nonlocal_usage: video.map(|v| v[1].0),
@@ -231,6 +298,12 @@ fn evaluate(sample: &Sample, target: u64, growth: Option<i128>) -> Vec<Alert> {
         alerts.push(Alert { code: "SYSTEM_MEMORY_LOAD_CRITICAL", critical: true });
     } else if sample.memory_load_percent >= 90 {
         alerts.push(Alert { code: "SYSTEM_MEMORY_LOAD_HIGH", critical: false });
+    }
+
+    if sample.system_commit_available <= GIB {
+        alerts.push(Alert { code: "SYSTEM_COMMIT_CRITICAL", critical: true });
+    } else if sample.system_commit_available <= 2 * GIB {
+        alerts.push(Alert { code: "SYSTEM_COMMIT_LOW", critical: false });
     }
 
     if growth.is_some_and(|bytes| bytes >= i128::from(512 * MIB)) {
@@ -305,13 +378,15 @@ fn write_sample(
 
     writeln!(
         writer,
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         sample.unix_ms,
         sample.pid,
         sample.working_set,
+        optional!(sample.private_working_set),
         sample.peak_working_set,
         sample.private_commit,
         sample.peak_private_commit,
+        optional!(sample.shared_commit),
         sample.paged_pool,
         sample.nonpaged_pool,
         sample.page_faults,
@@ -323,8 +398,10 @@ fn write_sample(
         sample.total_ram,
         sample.available_ram,
         sample.memory_load_percent,
-        sample.pagefile_limit,
-        sample.pagefile_available,
+        sample.system_commit_total,
+        sample.system_commit_limit,
+        sample.system_commit_peak,
+        sample.system_commit_available,
         optional!(sample.video_local_usage),
         optional!(sample.video_local_budget),
         optional!(sample.video_nonlocal_usage),
@@ -417,8 +494,10 @@ mod tests {
             pid: 1,
             working_set,
             peak_working_set: working_set,
-            private_commit: working_set,
+            private_working_set: Some(working_set),
             peak_private_commit: working_set,
+            shared_commit: Some(0),
+            private_commit: working_set,
             paged_pool: 0,
             nonpaged_pool: 0,
             page_faults: 0,
@@ -429,8 +508,10 @@ mod tests {
             total_ram: 16 * GIB,
             available_ram,
             memory_load_percent,
-            pagefile_limit: 0,
-            pagefile_available: 0,
+            system_commit_total: 0,
+            system_commit_limit: 0,
+            system_commit_peak: 0,
+            system_commit_available: 0,
             video_local_usage: None,
             video_local_budget: None,
             video_nonlocal_usage: None,
