@@ -136,6 +136,8 @@ pub fn start(directory: &Path) -> std::io::Result<PathBuf> {
 }
 
 fn collect() -> std::io::Result<Sample> {
+    // SAFETY: PROCESS_MEMORY_COUNTERS_EX2 is an integer-only C output structure;
+    // zero is a valid initial representation before the API fills it.
     let mut extended: PROCESS_MEMORY_COUNTERS_EX2 = unsafe { std::mem::zeroed() };
     extended.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32;
     // SAFETY: GetCurrentProcess returns a pseudo-handle for this process;
@@ -202,6 +204,7 @@ fn collect() -> std::io::Result<Sample> {
     // GlobalMemoryStatusEx and all other fields are initialized to zero.
     let mut system: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
     system.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    // SAFETY: system has the required dwLength and is writable output storage.
     if unsafe { GlobalMemoryStatusEx(&mut system) } == 0 {
         return Err(std::io::Error::last_os_error());
     }
@@ -209,8 +212,11 @@ fn collect() -> std::io::Result<Sample> {
     // GlobalMemoryStatusEx is useful for physical RAM availability. Get
     // system-wide commit totals separately: the page counts are multiplied
     // by the reported page size, as required by PERFORMANCE_INFORMATION.
+    // SAFETY: PERFORMANCE_INFORMATION contains integer fields; zero is a
+    // valid initial representation before the API fills the structure.
     let mut performance: PERFORMANCE_INFORMATION = unsafe { std::mem::zeroed() };
     performance.cb = std::mem::size_of::<PERFORMANCE_INFORMATION>() as u32;
+    // SAFETY: performance.cb is initialized and the structure is writable output storage.
     if unsafe { K32GetPerformanceInfo(&mut performance, performance.cb) } == 0 {
         return Err(std::io::Error::last_os_error());
     }
@@ -579,7 +585,7 @@ mod tests {
 
     #[test]
     fn rapid_resident_growth_is_reported() {
-        let alerts = evaluate(&sample(5 * GIB, 8 * GIB, 60), 10 * GIB, Some(512 * MIB));
+        let alerts = evaluate(&sample(5 * GIB, 8 * GIB, 60), 10 * GIB, Some(i128::from(512 * MIB)));
         assert!(alerts.iter().any(|alert| alert.code == "RAM_GROWTH_SPIKE"));
     }
 
