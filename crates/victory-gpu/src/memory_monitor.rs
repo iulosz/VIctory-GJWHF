@@ -617,6 +617,6 @@ mod tests {
         let mut history = VecDeque::new();
         history.push_back((now - Duration::from_secs(9), 2 * GIB));
         history.push_back((now - Duration::from_secs(2), 3 * GIB));
-        assert_eq!(growth_over_window(&history, now, 3 * GIB), Some(1_i128 * i128::from(GIB)));
+        assert_eq!(growth_over_window(&history, now, 3 * GIB), Some(i128::from(GIB)));
     }
 }
