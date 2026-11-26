@@ -235,7 +235,9 @@ system RAM availability and system commit headroom below 2 GiB are warnings,
 and below 1 GiB are critical. These thresholds indicate pressure; they do not enforce a hard cap or kill
 the title. The page-fault column is the process-wide page-fault counter and
 must not be interpreted as hard faults by itself. The existing GPU
-diagnostics continue to report hard-fault counts separately.
+diagnostics continue to report hard-fault counts separately. Local
+and non-local DXGI usage warn at 90% of budget and become critical at or
+above budget.
 
 Every build appends unhandled exceptions, panics, and host GPU failures to
 `crashes.log` in the title's data folder.
