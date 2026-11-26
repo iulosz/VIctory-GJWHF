@@ -508,10 +508,10 @@ mod tests {
             total_ram: 16 * GIB,
             available_ram,
             memory_load_percent,
-            system_commit_total: 0,
-            system_commit_limit: 0,
-            system_commit_peak: 0,
-            system_commit_available: 0,
+            system_commit_total: 8 * GIB,
+            system_commit_limit: 16 * GIB,
+            system_commit_peak: 8 * GIB,
+            system_commit_available: 8 * GIB,
             video_local_usage: None,
             video_local_budget: None,
             video_nonlocal_usage: None,
@@ -532,6 +532,20 @@ mod tests {
     fn low_available_system_ram_is_reported_independently() {
         let alerts = evaluate(&sample(4 * GIB, 900 * MIB, 60), 10 * GIB, None);
         assert!(alerts.iter().any(|alert| alert.code == "SYSTEM_RAM_CRITICAL" && alert.critical));
+    }
+
+    #[test]
+    fn low_system_commit_is_reported_independently() {
+        let mut sample = sample(4 * GIB, 8 * GIB, 60);
+        sample.system_commit_available = 900 * MIB;
+        let alerts = evaluate(&sample, 10 * GIB, None);
+        assert!(alerts.iter().any(|alert| alert.code == "SYSTEM_COMMIT_CRITICAL" && alert.critical));
+    }
+
+    #[test]
+    fn rapid_resident_growth_is_reported() {
+        let alerts = evaluate(&sample(5 * GIB, 8 * GIB, 60), 10 * GIB, Some(512 * MIB));
+        assert!(alerts.iter().any(|alert| alert.code == "RAM_GROWTH_SPIKE"));
     }
 
     #[test]
