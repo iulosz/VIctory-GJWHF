@@ -226,6 +226,16 @@ fn check_startup_archive(path: &Path) -> Result<()> {
 /// memory saved on a crash.
 #[cfg(all(windows, feature = "diagnostics"))]
 fn diagnostics(image: &victory_loader::LoadedImage, cfg: &victory_core::Config) {
+    // This background sampler records process, system and DXGI memory without
+    // adding work to the title's frame/presentation thread.
+    match cfg.cache_subdir("memory-monitor") {
+        Ok(directory) => {
+            if let Err(error) = victory_gpu::memory_monitor::start(&directory) {
+                tracing::warn!(%error, "could not start memory telemetry");
+            }
+        }
+        Err(error) => tracing::warn!(%error, "could not create memory telemetry directory"),
+    }
     victory_loader::dump_stacks_on_schedule();
     victory_hle::modules::audio::capture::start();
     watch(image.base(), image.info().size_of_image as usize);

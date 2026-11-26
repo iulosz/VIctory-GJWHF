@@ -30,6 +30,7 @@ diagnostics = [
     "victory-hle/diagnostics",
     "victory-loader/diagnostics",
     "victory-shader/diagnostics",
+    "victory-gpu/diagnostics",
 ]
 
 [lints]

@@ -38,6 +38,8 @@ mod host;
 #[cfg(windows)]
 mod indirect;
 pub mod list;
+#[cfg(all(windows, feature = "diagnostics"))]
+pub mod memory_monitor;
 #[cfg(windows)]
 mod memory;
 pub mod object;

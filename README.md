@@ -215,8 +215,29 @@ The on/off switches below (`...=1`) are off when unset or set to `0`.
 | `VICTORY_PIPELINE_LOG=<file>` | a line per title pipeline created (key, shaders, state), first used, and made or loaded (library name); `translate --cache --pipelines` writes the last kind too |
 | `VICTORY_PREBUILD_KEYS=<file>` | `translate --cache --pipelines` makes nothing and lists each pack record's key, shaders and state (or why it is skipped) |
 | `VICTORY_SHADER_LOOP_LIMIT=<n>` | translated shader loops stop after `n` iterations per lane instead of 2^20 (own shader cache entries); if a lower `n` makes world frames much faster, loops hitting the limit are what makes them slow |
+| `VICTORY_MEMORY_SAMPLE_MS=<ms>` | diagnostic memory telemetry interval (250–10000 ms; default 1000) |
+| `VICTORY_MEMORY_TARGET_GIB=<GiB>` | working-set budget used by memory alerts (default 10 GiB) |
 | `VICTORY_AUDIO_CAPTURE=<file.wav>` | records what the title plays (our process only) |
 | `VICTORY_XMA_DUMP=<dir>` | saves the first 32 XMA voices' context and input |
+
+
+On diagnostic runs, VIctory writes a per-run memory CSV under
+`<cache_dir>/memory-monitor/memory-<pid>-<timestamp>.csv`. A background
+thread samples total and private resident working sets (where the Windows
+version supports the extended counter), private commit, shared commit, process
+page-fault counter, Rust heap, live command-list upload memory, cumulative
+placed texture allocations, physical RAM availability, system-wide commit
+charge and limit, and DXGI local / non-local video-memory usage and budgets.
+Older Windows versions fall back to the base process counters. The monitor
+does not wait on the rendering thread. It reports a warning as the working set reaches 8 GiB,
+another at 9 GiB, and a critical alert at the configured 10 GiB target;
+system RAM availability and system commit headroom below 2 GiB are warnings,
+and below 1 GiB are critical. These thresholds indicate pressure; they do not enforce a hard cap or kill
+the title. The page-fault column is the process-wide page-fault counter and
+must not be interpreted as hard faults by itself. The existing GPU
+diagnostics continue to report hard-fault counts separately. Local
+and non-local DXGI usage warn at 90% of budget and become critical at or
+above budget.
 
 Every build appends unhandled exceptions, panics, and host GPU failures to
 `crashes.log` in the title's data folder.

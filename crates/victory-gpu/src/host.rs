@@ -359,9 +359,12 @@ fn log_gpu_times(frames: f64) {
 /// allocations at submissions.
 pub(crate) fn video_memory() -> Option<[(f64, f64); 2]> {
     static ADAPTER: OnceLock<Option<IDXGIAdapter3>> = OnceLock::new();
+    // Do not initialise ADAPTER while the game has not created its D3D12
+    // device yet. Diagnostic telemetry starts before title code, so caching
+    // an early None here would otherwise disable VRAM samples for the run.
+    let device = &host()?.device;
     let adapter = ADAPTER
         .get_or_init(|| {
-            let device = &host()?.device;
             // SAFETY: plain device and DXGI queries.
             unsafe {
                 let luid = device.GetAdapterLuid();
