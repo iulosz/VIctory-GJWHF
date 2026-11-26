@@ -378,7 +378,7 @@ fn write_sample(
 
     writeln!(
         writer,
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         sample.unix_ms,
         sample.pid,
         sample.working_set,
@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn ten_gib_working_set_budget_has_approaching_near_and_exceeded_states() {
         let target = 10 * GIB;
-        assert_eq!(evaluate(&sample(7 * GIB, 8 * GIB, 40), target, None), []);
+        assert!(evaluate(&sample(7 * GIB, 8 * GIB, 40), target, None).is_empty());
         assert_eq!(evaluate(&sample(8 * GIB, 8 * GIB, 40), target, None)[0].code, "RAM_TARGET_APPROACHING");
         assert_eq!(evaluate(&sample(9 * GIB, 8 * GIB, 40), target, None)[0].code, "RAM_TARGET_NEAR");
         assert_eq!(evaluate(&sample(10 * GIB, 8 * GIB, 40), target, None)[0].code, "RAM_TARGET_EXCEEDED");
