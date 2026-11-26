@@ -19,6 +19,7 @@ use windows_sys::Win32::System::ProcessStatus::{
 use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
+const MIB: u64 = 1024 * 1024;
 const GIB: u64 = 1024 * 1024 * 1024;
 const HEADER: &str = concat!(
     "unix_ms,pid,working_set_bytes,private_working_set_bytes,peak_working_set_bytes,",
@@ -270,7 +271,7 @@ fn growth_over_window(
     now: Instant,
     current_working_set: u64,
 ) -> Option<i128> {
-    let (at, bytes) = history
+    let (_, bytes) = history
         .iter()
         .find(|(at, _)| now.duration_since(*at) >= Duration::from_secs(8))?;
     Some(signed_delta(current_working_set, *bytes))
