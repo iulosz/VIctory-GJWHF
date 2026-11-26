@@ -20,7 +20,6 @@ use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORY
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
 const GIB: u64 = 1024 * 1024 * 1024;
-const MIB: u64 = 1024 * 1024;
 const HEADER: &str = concat!(
     "unix_ms,pid,working_set_bytes,private_working_set_bytes,peak_working_set_bytes,",
     "private_commit_bytes,peak_private_commit_bytes,shared_commit_bytes,paged_pool_bytes,",
@@ -565,7 +564,7 @@ mod tests {
 
     #[test]
     fn low_available_system_ram_is_reported_independently() {
-        let alerts = evaluate(&sample(4 * GIB, 900 * MIB, 60), 10 * GIB, None);
+        let alerts = evaluate(&sample(4 * GIB, 900 * (GIB / 1024), 60), 10 * GIB, None);
         assert!(alerts.iter().any(|alert| alert.code == "SYSTEM_RAM_CRITICAL" && alert.critical));
     }
 
