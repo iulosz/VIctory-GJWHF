@@ -199,11 +199,15 @@ fn signed_delta(current: u64, previous: u64) -> i128 {
     i128::from(current) - i128::from(previous)
 }
 
-fn growth_over_window(history: &VecDeque<(Instant, u64)>, now: Instant) -> Option<i128> {
+fn growth_over_window(
+    history: &VecDeque<(Instant, u64)>,
+    now: Instant,
+    current_working_set: u64,
+) -> Option<i128> {
     let (at, bytes) = history
         .iter()
         .find(|(at, _)| now.duration_since(*at) >= Duration::from_secs(8))?;
-    Some(signed_delta(history.back()?.1, *bytes))
+    Some(signed_delta(current_working_set, *bytes))
 }
 
 fn evaluate(sample: &Sample, target: u64, growth: Option<i128>) -> Vec<Alert> {
@@ -350,7 +354,7 @@ fn sample_loop(mut writer: BufWriter<std::fs::File>, interval: Duration, target:
                     history.pop_front();
                 }
 
-                let growth = growth_over_window(&history, sampled_at);
+                let growth = growth_over_window(&history, sampled_at, sample.working_set);
                 history.push_back((sampled_at, sample.working_set));
                 if history.len() > 48 {
                     history.pop_front();
@@ -455,6 +459,6 @@ mod tests {
         let mut history = VecDeque::new();
         history.push_back((now - Duration::from_secs(9), 2 * GIB));
         history.push_back((now - Duration::from_secs(2), 3 * GIB));
-        assert_eq!(growth_over_window(&history, now), Some(1_i128 * i128::from(GIB)));
+        assert_eq!(growth_over_window(&history, now, 3 * GIB), Some(1_i128 * i128::from(GIB)));
     }
 }
