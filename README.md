@@ -222,7 +222,7 @@ The on/off switches below (`...=1`) are off when unset or set to `0`.
 
 
 On diagnostic runs, VIctory writes a per-run memory CSV under
-`<cache_dir>\\memory-monitor\\memory-<pid>-<timestamp>.csv`. A background
+`<cache_dir>/memory-monitor/memory-<pid>-<timestamp>.csv`. A background
 thread samples total and private resident working sets (where the Windows
 version supports the extended counter), private commit, shared commit, process
 page-fault counter, Rust heap, live command-list upload memory, cumulative
@@ -231,8 +231,8 @@ charge and limit, and DXGI local / non-local video-memory usage and budgets.
 Older Windows versions fall back to the base process counters. The monitor
 does not wait on the rendering thread. It reports a warning as the working set reaches 8 GiB,
 another at 9 GiB, and a critical alert at the configured 10 GiB target;
-system RAM availability below 2 GiB is a warning and below 1 GiB is critical.
-These thresholds indicate pressure; they do not enforce a hard cap or kill
+system RAM availability and system commit headroom below 2 GiB are warnings,
+and below 1 GiB are critical. These thresholds indicate pressure; they do not enforce a hard cap or kill
 the title. The page-fault column is the process-wide page-fault counter and
 must not be interpreted as hard faults by itself. The existing GPU
 diagnostics continue to report hard-fault counts separately.
